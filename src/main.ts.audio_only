@@ -1,0 +1,337 @@
+import { Csound } from '@csound/browser';
+
+// エラー情報のインターフェース
+interface ErrorInfo {
+  message: string;
+  stack?: string;
+  timestamp: string;
+  severity: 'low' | 'medium' | 'critical';
+  userMessage: string;
+  context: string;
+}
+
+// エラーハンドラークラス
+class ErrorHandler {
+  private readonly ERROR_DISPLAY_DURATION = 5000;
+  private readonly errorContainer: HTMLDivElement;
+
+  constructor() {
+    this.errorContainer = this.createErrorContainer();
+  }
+
+  private createErrorContainer(): HTMLDivElement {
+    const container = document.createElement('div');
+    Object.assign(container.style, {
+      position: 'fixed',
+      top: '10px',
+      right: '10px',
+      zIndex: '1000',
+      maxWidth: '300px'
+    });
+    document.body.appendChild(container);
+    return container;
+  }
+
+  public handleError(error: unknown, context?: string): void {
+    const errorInfo = this.formatError(error, context);
+    console.error('Application Error:', errorInfo);
+    this.showErrorToUser(errorInfo.userMessage);
+  }
+
+  private formatError(error: unknown, context?: string): ErrorInfo {
+    const errorInfo: ErrorInfo = {
+      message: '',
+      timestamp: new Date().toISOString(),
+      severity: 'low',
+      userMessage: '',
+      context: context || 'general'
+    };
+
+    if (error instanceof Error) {
+      errorInfo.message = error.message;
+      errorInfo.stack = error.stack;
+      errorInfo.userMessage = this.getUserFriendlyMessage(error);
+    } else {
+      errorInfo.message = String(error);
+      errorInfo.userMessage = 'An unexpected error occurred';
+    }
+
+    return errorInfo;
+  }
+
+  private getUserFriendlyMessage(error: Error): string {
+    return `An error occurred: ${error.message}. Please try again.`;
+  }
+
+  private showErrorToUser(message: string): void {
+    const errorElement = document.createElement('div');
+    Object.assign(errorElement.style, {
+      backgroundColor: 'rgba(255, 0, 0, 0.8)',
+      color: 'white',
+      padding: '10px',
+      margin: '5px',
+      borderRadius: '5px',
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '14px',
+      opacity: '1',
+      transition: 'opacity 0.5s ease-in-out'
+    });
+
+    errorElement.textContent = message;
+    this.errorContainer.appendChild(errorElement);
+
+    setTimeout(() => {
+      errorElement.style.opacity = '0';
+      setTimeout(() => {
+        if (errorElement.parentNode === this.errorContainer) {
+          this.errorContainer.removeChild(errorElement);
+        }
+      }, 500);
+    }, this.ERROR_DISPLAY_DURATION);
+  }
+}
+
+// メインのアプリケーションクラス
+class App {
+  private csound: Csound | null = null;
+  private readonly errorHandler: ErrorHandler;
+  private readonly debugMode: boolean;
+  private disposed = false;
+
+    constructor() {
+    this.errorHandler = new ErrorHandler();
+    this.debugMode = process.env.NODE_ENV === 'development';
+
+    try {
+      this.setupUI();
+      // Csoundの初期化は constructor では行わない
+    } catch (error) {
+      this.handleError(error, 'constructor');
+      throw error;
+    }
+  }
+
+  private setupUI(): void {
+    // オーディオ開始ボタンの作成
+    const startAudioButton = document.createElement('button');
+    Object.assign(startAudioButton.style, {
+      position: 'fixed',
+      top: '120px',
+      left: '10px',
+      padding: '8px 16px',
+      backgroundColor: '#4CAF50',
+      color: 'white',
+      border: 'none',
+      borderRadius: '4px',
+      cursor: 'pointer',
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '14px',
+      zIndex: '100'
+    });
+    startAudioButton.textContent = 'Enable Audio';
+
+    startAudioButton.onclick = async () => {
+      try {
+        await this.initializeCsound();
+        startAudioButton.remove();
+      } catch (error) {
+        console.error('Failed to initialize audio:', error);
+        startAudioButton.textContent = 'Failed - Click to retry';
+        this.handleError(error, 'audio-initialization');
+      }
+    };
+
+    document.body.appendChild(startAudioButton);
+    
+    // インストラクションの作成
+    const div = document.createElement('div');
+    Object.assign(div.style, {
+      position: 'fixed',
+      top: '60px',
+      left: '10px',
+      backgroundColor: 'rgba(0, 0, 0, 0.7)',
+      color: 'white',
+      padding: '12px',
+      borderRadius: '8px',
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '16px'
+    });
+    
+    div.textContent = 'Enable audio first, then click anywhere to play sound.';
+    document.body.appendChild(div);
+
+    // クリックイベントの設定を修正
+    document.addEventListener('click', async (e) => {
+      // ボタンのクリックイベントは無視
+      if (e.target === startAudioButton) {
+        return;
+      }
+      
+      // 初期化完了後のみ音を再生
+      if (this.audioInitialized) {
+        await this.handleClick();
+      } else {
+        console.log('Please enable audio first');
+      }
+    });
+  }
+
+
+
+
+
+
+
+  
+  private async initializeAsyncComponents(): Promise<void> {
+    try {
+      await this.initializeCsound();
+    } catch (error) {
+      throw new Error(`Failed to initialize async components: ${error.message}`);
+    }
+  }
+
+  private handleError(error: unknown, context?: string): void {
+    this.errorHandler.handleError(error, context);
+  }
+
+  private setupUI(): void {
+    // インストラクションの作成
+    this.createInstructions();
+
+    // クリックイベントの設定
+    document.addEventListener('click', () => {
+      this.handleClick();
+    });
+  }
+
+  private createInstructions(): void {
+    const div = document.createElement('div');
+    Object.assign(div.style, {
+      position: 'fixed',
+      top: '60px',
+      left: '10px',
+      backgroundColor: 'rgba(0, 0, 0, 0.7)',
+      color: 'white',
+      padding: '12px',
+      borderRadius: '8px',
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '14px'
+    });
+    
+    div.textContent = 'Click anywhere to play sound.';
+    document.body.appendChild(div);
+  }
+
+  private async initializeCsound(): Promise<void> {
+    try {
+      if (this.csound) return;
+
+      // Csoundインスタンスの作成（ユーザーインタラクション後）
+      this.csound = await Csound();
+      console.log('Csound instance created');
+
+      // オプションの設定
+      const options = [
+        '--realtime',
+        '--daemon',
+        '-m0',
+        '-d',
+        '-+rtaudio=webaudio',
+        '--sample-rate=48000',
+        '--ksmps=128'
+      ];
+
+      for (const option of options) {
+        await this.csound.setOption(option);
+      }
+
+      // CSDファイルのコンパイル
+      await this.csound.compileCsdText(csd);
+      console.log('CSD compiled successfully');
+
+      // Csoundの開始
+      await this.csound.start();
+      console.log('Csound started successfully');
+
+      // テスト音を再生
+      await this.csound.inputMessage('i 1 0 1 0.3 440');
+      console.log('Test sound played');
+
+    } catch (error) {
+      this.handleError(error, 'csound-initialization');
+      console.warn('Csound initialization failed - audio will be disabled');
+      throw error; // 上位のハンドラーに再スロー
+    }
+  }
+
+
+
+  
+
+  private async handleClick(): Promise<void> {
+    if (!this.csound) {
+      console.warn('Csound not initialized');
+      return;
+    }
+
+    try {
+      // ランダムな周波数を生成 (220Hz から 880Hz)
+      const frequency = 220 + Math.random() * 660;
+      // スコアイベントの生成: i 1 0 2 0.5 frequency
+      // instrument 1, start 0, duration 2, amplitude 0.5, frequency
+      await this.csound.inputMessage(`i 1 0 2 0.5 ${frequency}`);
+      console.log('Playing sound at frequency:', frequency);
+    } catch (error) {
+      this.handleError(error, 'sound-playback');
+    }
+  }
+
+  public dispose(): void {
+    if (this.disposed) return;
+
+    console.log('Disposing application resources...');
+    this.disposed = true;
+
+    try {
+      // Csoundの停止
+      if (this.csound) {
+        this.csound.stop().catch(this.handleError);
+        this.csound = null;
+      }
+
+      console.log('Application disposed successfully');
+
+    } catch (error) {
+      this.handleError(error, 'disposal');
+    }
+  }
+}
+
+// アプリケーションの初期化
+function initializeApplication(): void {
+  try {
+    const app = new App();
+
+    // ホットリロードの設定
+    if (import.meta.hot) {
+      import.meta.hot.accept('./App', () => {
+        console.log('Hot reloading application...');
+        app.dispose();
+        initializeApplication();
+      });
+    }
+
+    console.log('Application initialized successfully');
+
+  } catch (error) {
+    console.error('Failed to initialize application:', error);
+    throw error;
+  }
+}
+
+// アプリケーションの起動
+initializeApplication();
+
+// エクスポート
+export { App, ErrorHandler };

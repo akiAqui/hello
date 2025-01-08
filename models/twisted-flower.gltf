@@ -1,0 +1,196 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "Twisted Star Flower Generator"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [0, 1]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "flower_petals",
+      "mesh": 0,
+      "rotation": [0, 0.7071068, 0, 0.7071068],  // 90度回転
+      "translation": [0, 0.5, 0]
+    },
+    {
+      "name": "flower_center",
+      "mesh": 1,
+      "translation": [0, 0.5, 0],
+      "scale": [0.3, 0.3, 0.3]
+    }
+  ],
+  "meshes": [
+    {
+      "name": "twisted_petals",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TANGENT": 2,
+            "TEXCOORD_0": 3
+          },
+          "indices": 4,
+          "material": 0
+        }
+      ]
+    },
+    {
+      "name": "center_sphere",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 5,
+            "NORMAL": 6,
+            "TEXCOORD_0": 7
+          },
+          "indices": 8,
+          "material": 1
+        }
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "name": "petal_material",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [0.9, 0.4, 0.4, 1.0],
+        "metallicFactor": 0.1,
+        "roughnessFactor": 0.6
+      },
+      "normalTexture": {
+        "index": 0,
+        "scale": 1.0
+      },
+      "occlusionTexture": {
+        "index": 1,
+        "strength": 0.8
+      },
+      "emissiveFactor": [0.1, 0.05, 0.05],
+      "doubleSided": true,
+      "alphaMode": "BLEND"
+    },
+    {
+      "name": "center_material",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [0.8, 0.7, 0.2, 1.0],
+        "metallicFactor": 0.7,
+        "roughnessFactor": 0.3
+      },
+      "emissiveFactor": [0.2, 0.2, 0.0]
+    }
+  ],
+  "animations": [
+    {
+      "name": "petal_wave",
+      "channels": [
+        {
+          "sampler": 0,
+          "target": {
+            "node": 0,
+            "path": "rotation"
+          }
+        }
+      ],
+      "samplers": [
+        {
+          "input": 9,
+          "interpolation": "LINEAR",
+          "output": 10
+        }
+      ]
+    }
+  ],
+  "buffers": [
+    {
+      "uri": "data:application/octet-stream;base64,AABAQAAAAAAAAAAAAAAAAAAAAAAAAABAQAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAgD8AAAAAAACAPwAAgD8AAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/AAAAAAAAgD8AAAAAAACAPwAAAAAAAIA/AACAPwAAgD8AAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/AAAAAAAAgD8AAAAAAACAPwAAAAAAAIA/AACAPwAAgD8AAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/AAAAAAAAgD8AAAAAAACAPwAAAAAAAIA/AACAPwAAgD8AAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/AAAAAAAAgD8AAAAAAACAPwAAAAAAAIA/AACAPwAAgD8AAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/AAAAAAAAgD8AAAAAAACAPwAAAAAAAIA/AACAPwAAgD8AAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/AAAAAAAAgD8AAAAAAACAPwAAAAAAAIA/AACAPwAAgD8AAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/AAAAAAAAgD8AAAAAAACAPwAAAAAAAIA/AACAPwAAgD8AAIA/AAAAAAAAAAD//38/AAAAAAAAAAD//38/AAAAAAAAAAD//38/AACAPwAAgD8AAIA/...",  // 実際のバッファデータは省略
+      "byteLength": 2880  // より多くの頂点データ
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 720,  // より多くの頂点座標
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 720,
+      "byteLength": 720,  // 法線ベクトル
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 1440,
+      "byteLength": 960,  // 接線ベクトル
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 2400,
+      "byteLength": 480,  // テクスチャ座標
+      "target": 34962
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 60,  // より多くの頂点数
+      "type": "VEC3",
+      "max": [2.0, 2.0, 2.0],
+      "min": [-2.0, -2.0, -2.0]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 60,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 60,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5126,
+      "count": 60,
+      "type": "VEC2"
+    }
+  ],
+  "images": [
+    {
+      "uri": "petal_normal.png",
+      "mimeType": "image/png"
+    },
+    {
+      "uri": "petal_occlusion.png",
+      "mimeType": "image/png"
+    }
+  ],
+  "textures": [
+    {
+      "source": 0,
+      "sampler": 0
+    },
+    {
+      "source": 1,
+      "sampler": 0
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9729,
+      "minFilter": 9987,
+      "wrapS": 10497,
+      "wrapT": 10497
+    }
+  ]
+}

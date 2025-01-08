@@ -1,0 +1,1382 @@
+// 必要なモジュールのインポート
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
+import Stats from 'three/examples/jsm/libs/stats.module';
+import { Csound } from '@csound/browser';
+import csd from '/csound/synth.csd?raw';
+
+// アプリケーションの状態を管理するインターフェース
+interface AnimationState {
+  cubeRotating: boolean;
+  modelScaling: boolean;
+}
+
+// 3Dリソースを管理するインターフェース
+interface ResourceManager {
+  textures: THREE.Texture[];
+  geometries: THREE.BufferGeometry[];
+  materials: THREE.Material[];
+}
+
+// パフォーマンス測定用のインターフェース
+interface PerformanceStats {
+  fps: number;
+  frameTime: number;
+  lastTime: number;
+  frameCount: number;
+}
+
+/**
+ * Three.jsアプリケーションのメインクラス
+ * 3Dシーンの管理、モデルのロード、アニメーション制御を行います
+ */
+class App {
+  // Three.js関連のプロパティ
+  private readonly scene: THREE.Scene;
+  private readonly camera: THREE.PerspectiveCamera;
+  private readonly renderer: THREE.WebGLRenderer;
+  private readonly controls: OrbitControls;
+  private readonly stats: Stats;
+
+  // 3Dオブジェクト
+  private readonly cube: THREE.Mesh;
+  private model: THREE.Object3D | null = null;
+
+  // リソース管理
+  private readonly resourceManager: ResourceManager;
+  
+  // 状態管理
+  private disposed = false;
+  private readonly debugMode: boolean;
+  private readonly animationState: AnimationState;
+  private readonly performanceStats: PerformanceStats;
+
+  // UI要素
+  private readonly instructionsDiv: HTMLDivElement;
+  
+  // サウンド
+  private csound: Csound | null = null;
+
+  constructor() {
+    // デバッグモードの設定
+    this.debugMode = process.env.NODE_ENV === 'development';
+
+    // 状態の初期化
+    this.animationState = {
+      cubeRotating: false,
+      modelScaling: false
+    };
+
+    // パフォーマンス測定の初期化
+    this.performanceStats = {
+      fps: 0,
+      frameTime: 0,
+      lastTime: performance.now(),
+      frameCount: 0
+    };
+
+    // リソース管理の初期化
+    this.resourceManager = {
+      textures: [],
+      geometries: [],
+      materials: []
+    };
+
+    try {
+      // シーンの初期化
+      this.scene = new THREE.Scene();
+      
+      // カメラの初期化
+      this.camera = this.createCamera();
+      
+      // レンダラーの初期化
+      this.renderer = this.createRenderer();
+      
+      // Stats（パフォーマンスモニタ）の初期化
+      this.stats = new Stats();
+      document.body.appendChild(this.stats.dom);
+
+      // 基本的なシーン要素のセットアップ
+      this.setupLights();
+      this.createEnvironment();
+      
+      // オブジェクトの作成
+      this.cube = this.createCube();
+      
+      // コントロールの設定
+      this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+      this.controls.enableDamping = true;
+      
+      // 操作説明の作成
+      this.instructionsDiv = this.createInstructions();
+      
+      // イベントリスナーのセットアップ
+      this.setupEventListeners();
+      
+      // モデルのロード
+      this.loadModel().catch(this.handleError.bind(this));
+      
+      // Csoundの初期化
+      this.initializeCsound().catch(this.handleError.bind(this));
+      
+      // アニメーションの開始
+      this.animate();
+      
+    } catch (error) {
+      this.handleError(error);
+      throw error; // 初期化エラーは致命的なので再スロー
+    }
+  }
+
+  /**
+   * カメラの作成
+   * パースペクティブカメラを適切な設定で初期化します
+   */
+  private createCamera(): THREE.PerspectiveCamera {
+    const camera = new THREE.PerspectiveCamera(
+      75, // 視野角
+      window.innerWidth / window.innerHeight, // アスペクト比
+      0.1, // ニアクリップ
+      1000 // ファークリップ
+    );
+    camera.position.set(5, 5, 5);
+    camera.lookAt(0, 0, 0);
+    return camera;
+  }
+
+  /**
+   * レンダラーの作成
+   * WebGLレンダラーを適切な設定で初期化します
+   */
+  private createRenderer(): THREE.WebGLRenderer {
+    const renderer = new THREE.WebGLRenderer({
+      antialias: true,
+      alpha: true,
+      powerPreference: 'high-performance'
+    });
+    
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // パフォーマンスのための制限
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    
+    const appElement = document.getElementById('app');
+    if (!appElement) {
+      throw new Error('App element not found in DOM');
+    }
+    appElement.appendChild(renderer.domElement);
+    
+    return renderer;
+  }
+
+
+/**
+   * シーンの環境設定を行います
+   * ライティング、床、環境マップなどの基本的な3D環境を構築します
+   */
+  private setupLights(): void {
+    // メインの平行光源（太陽光のような光）
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+    directionalLight.position.set(5, 5, 5);
+    directionalLight.castShadow = true;
+    directionalLight.shadow.mapSize.width = 2048;
+    directionalLight.shadow.mapSize.height = 2048;
+    this.scene.add(directionalLight);
+
+    // 環境光（全体的な明るさ）
+    const ambientLight = new THREE.AmbientLight(0x404040, 0.5);
+    this.scene.add(ambientLight);
+
+    // 補助的なポイントライト（局所的な光）
+    const pointLight = new THREE.PointLight(0xffffff, 0.5);
+    pointLight.position.set(-5, 3, -5);
+    this.scene.add(pointLight);
+  }
+
+  /**
+   * 3D環境の基本要素を作成します
+   * 床、背景、補助的な視覚要素などを設定します
+   */
+  private createEnvironment(): void {
+    // 床の作成
+    const floorGeometry = new THREE.PlaneGeometry(20, 20);
+    const floorMaterial = new THREE.MeshStandardMaterial({
+      color: 0x808080,
+      roughness: 0.8,
+      metalness: 0.2
+    });
+    const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+    floor.rotation.x = -Math.PI / 2;
+    floor.receiveShadow = true;
+    this.scene.add(floor);
+
+    // リソース管理への登録
+    this.resourceManager.geometries.push(floorGeometry);
+    this.resourceManager.materials.push(floorMaterial);
+
+    // グリッドヘルパー（開発モード時のみ）
+    if (this.debugMode) {
+      const gridHelper = new THREE.GridHelper(20, 20);
+      this.scene.add(gridHelper);
+    }
+  }
+
+  /**
+   * キューブオブジェクトを作成します
+   * テクスチャ付きの立方体を生成し、シーンに追加します
+   */
+  private createCube(): THREE.Mesh {
+    const geometry = new THREE.BoxGeometry(2, 2, 2);
+    const textureLoader = new THREE.TextureLoader();
+    
+    // 6面にそれぞれ異なるテクスチャを設定
+    const texturePaths = [
+      'autumn_ground.jpg',
+      'lakeSide.jpg',
+      'ruinOfFishermansFactory.jpg',
+      'wave.jpg',
+      'kareha.jpg',
+      'pebble.jpg'
+    ];
+
+    try {
+      const materials = texturePaths.map(path => {
+        const texture = textureLoader.load(
+          `/textures/${path}`,
+          undefined,
+          undefined,
+          (error) => this.handleError(new Error(`Failed to load texture: ${path}`))
+        );
+        this.resourceManager.textures.push(texture);
+        
+        const material = new THREE.MeshStandardMaterial({
+          map: texture,
+          roughness: 0.7,
+          metalness: 0.3
+        });
+        this.resourceManager.materials.push(material);
+        
+        return material;
+      });
+
+      const cube = new THREE.Mesh(geometry, materials);
+      cube.position.set(2, 4, 2);
+      cube.castShadow = true;
+      this.scene.add(cube);
+
+      this.resourceManager.geometries.push(geometry);
+      
+      return cube;
+
+    } catch (error) {
+      this.handleError(error);
+      // エラー時は単色のマテリアルでフォールバック
+      const fallbackMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+      this.resourceManager.materials.push(fallbackMaterial);
+      const fallbackCube = new THREE.Mesh(geometry, fallbackMaterial);
+      fallbackCube.position.set(2, 4, 2);
+      this.scene.add(fallbackCube);
+      return fallbackCube;
+    }
+  }
+
+  /**
+   * GLTFモデルをロードします
+   * モデルの読み込み、検証、セットアップを行います
+   */
+  private async loadModel(): Promise<void> {
+    const loader = new GLTFLoader();
+    const loadingManager = new THREE.LoadingManager();
+    
+    loadingManager.onProgress = (url, loaded, total) => {
+      if (this.debugMode) {
+        console.log(`Loading model: ${url} - ${(loaded / total * 100).toFixed(2)}%`);
+      }
+    };
+
+    try {
+      const gltf = await new Promise<THREE.GLTF>((resolve, reject) => {
+        loader.load(
+          '/models/complex.glb',
+          resolve,
+          (xhr) => {
+            if (this.debugMode) {
+              console.log(`Loading model: ${(xhr.loaded / xhr.total * 100)}% loaded`);
+            }
+          },
+          reject
+        );
+      });
+
+      this.model = gltf.scene;
+      await this.setupLoadedModel();
+
+    } catch (error) {
+      this.handleError(new Error('Failed to load model: ' + error));
+      this.createErrorModel();
+    }
+  }
+
+  /**
+   * ロードされたモデルのセットアップを行います
+   * マテリアルの設定、位置調整、最適化などを実施します
+   */
+  private async setupLoadedModel(): Promise<void> {
+    if (!this.model) return;
+
+    try {
+      let meshCount = 0;
+      this.model.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          meshCount++;
+          this.setupModelMesh(child);
+        }
+      });
+
+      if (meshCount === 0) {
+        throw new Error('No meshes found in loaded model');
+      }
+
+      // モデルの配置とスケール
+      this.model.position.set(-2, 1, 0);
+      this.model.scale.setScalar(3);
+
+      // デバッグ用の視覚的ヘルパーを追加
+      if (this.debugMode) {
+        this.addModelDebugHelpers();
+      }
+
+      // バウンディングボックスの計算と検証
+      const bbox = new THREE.Box3().setFromObject(this.model);
+      const size = bbox.getSize(new THREE.Vector3());
+      
+      if (size.length() === 0) {
+        throw new Error('Model has zero dimensions');
+      }
+
+      this.scene.add(this.model);
+      
+      if (this.debugMode) {
+        console.log('Model setup completed successfully', {
+          meshCount,
+          size,
+          position: this.model.position
+        });
+      }
+
+    } catch (error) {
+      this.handleError(error);
+      this.model = null;
+      this.createErrorModel();
+    }
+  }
+
+  /**
+   * モデルのメッシュ個別のセットアップを行います
+   * マテリアル設定、シャドウ、最適化を適用します
+   */
+  private setupModelMesh(mesh: THREE.Mesh): void {
+    // マテリアルの設定
+    const material = new THREE.MeshStandardMaterial({
+      color: 0xff0000,
+      metalness: 0.1,
+      roughness: 0.5,
+      side: THREE.DoubleSide
+    });
+    mesh.material = material;
+    this.resourceManager.materials.push(material);
+
+    // シャドウの設定
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+
+    // ジオメトリの最適化
+    mesh.geometry.computeBoundingSphere();
+    mesh.geometry.computeBoundingBox();
+
+    // バッファの最適化
+    if (mesh.geometry.index !== null) {
+      mesh.geometry.index.needsUpdate = true;
+    }
+    Object.values(mesh.geometry.attributes).forEach(attribute => {
+      attribute.needsUpdate = true;
+    });
+
+    // リソース管理への登録
+    this.resourceManager.geometries.push(mesh.geometry);
+  }
+
+  /**
+   * モデルのデバッグ用ヘルパーを追加します
+   * 開発モード時のみ有効です
+   */
+  private addModelDebugHelpers(): void {
+    if (!this.model || !this.debugMode) return;
+
+    // バウンディングボックスヘルパー
+    const bbox = new THREE.Box3().setFromObject(this.model);
+    const bboxHelper = new THREE.Box3Helper(bbox, 0xffff00);
+    this.scene.add(bboxHelper);
+
+    // 軸ヘルパー
+    const axesHelper = new THREE.AxesHelper(2);
+    this.model.add(axesHelper);
+
+    // ワイヤーフレーム表示
+    this.model.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        const wireframe = new THREE.WireframeGeometry(child.geometry);
+        const line = new THREE.LineSegments(wireframe);
+        (line.material as THREE.LineBasicMaterial).color.set(0x00ff00);
+        child.add(line);
+      }
+    });
+  }
+
+  /**
+   * エラー発生時の代替モデルを作成します
+   * 赤い球体をプレースホルダーとして表示します
+   */
+  private createErrorModel(): void {
+    const geometry = new THREE.SphereGeometry(0.5, 32, 32);
+    const material = new THREE.MeshBasicMaterial({
+      color: 0xff0000,
+      wireframe: true
+    });
+    const errorSphere = new THREE.Mesh(geometry, material);
+    errorSphere.position.set(-2, 1, 0);
+    this.scene.add(errorSphere);
+
+    // リソース管理への登録
+    this.resourceManager.geometries.push(geometry);
+    this.resourceManager.materials.push(material);
+  }
+
+/**
+   * メインのアニメーションループを処理します
+   * フレーム毎の更新とレンダリングを制御します
+   */
+  private animate(): void {
+    if (this.disposed) return;
+
+    // 次のフレームのアニメーションをスケジュール
+    requestAnimationFrame(this.animate.bind(this));
+    
+    // パフォーマンス測定開始
+    this.stats.begin();
+
+    // フレームカウントの更新
+    this.performanceStats.frameCount++;
+
+    try {
+      // アニメーションの状態を更新
+      this.updateAnimations();
+
+      // カメラコントロールの更新
+      this.controls.update();
+
+      // シーンのレンダリング
+      this.renderer.render(this.scene, this.camera);
+
+      // 定期的なパフォーマンス情報の更新（60フレームごと）
+      if (this.debugMode && this.performanceStats.frameCount % 60 === 0) {
+        this.updatePerformanceStats();
+        this.logSceneInfo();
+      }
+
+    } catch (error) {
+      this.handleError(new Error('Animation loop error: ' + error));
+    }
+
+    // パフォーマンス測定終了
+    this.stats.end();
+  }
+
+  /**
+   * アニメーション状態を更新します
+   * キューブの回転とモデルのスケーリングを制御します
+   */
+  private updateAnimations(): void {
+    const currentTime = performance.now();
+    const deltaTime = (currentTime - this.performanceStats.lastTime) / 1000; // 秒単位
+    this.performanceStats.lastTime = currentTime;
+
+    // キューブの回転アニメーション
+    if (this.animationState.cubeRotating) {
+      const rotationSpeed = Math.PI * deltaTime; // 1回転/秒
+      this.cube.rotation.y += rotationSpeed * 0.5;
+      this.cube.rotation.z += rotationSpeed * 0.3;
+    }
+
+    // モデルのスケーリングアニメーション
+    if (this.animationState.modelScaling && this.model) {
+      const baseScale = 3.0;
+      const scaleVariation = 0.2;
+      const scalingSpeed = 2.0; // Hz
+      const scale = baseScale + 
+        Math.sin(currentTime * scalingSpeed * 0.001) * scaleVariation;
+      
+      this.model.scale.setScalar(scale);
+    }
+  }
+
+  /**
+   * イベントリスナーを設定します
+   * ユーザー入力とウィンドウイベントを処理します
+   */
+  private setupEventListeners(): void {
+    // マウスイベント用のレイキャスター
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+
+    // クリックイベント
+    window.addEventListener('click', (event) => {
+      this.handleClick(event, raycaster, mouse);
+    });
+
+    // キーボードイベント
+    window.addEventListener('keydown', this.handleKeyDown.bind(this));
+
+    // ウィンドウリサイズ
+    window.addEventListener('resize', this.handleResize.bind(this));
+
+    // アプリケーション終了時の処理
+    window.addEventListener('beforeunload', this.dispose.bind(this));
+
+    // デバッグ用のキーバインド（開発モードのみ）
+    if (this.debugMode) {
+      window.addEventListener('keypress', (event) => {
+        switch (event.key.toLowerCase()) {
+          case 'd':
+            this.toggleDebugHelpers();
+            break;
+          case 'p':
+            this.logPerformanceStats();
+            break;
+        }
+      });
+    }
+  }
+
+  /**
+   * クリックイベントを処理します
+   * オブジェクトの選択とインタラクションを管理します
+   */
+  private handleClick(
+    event: MouseEvent,
+    raycaster: THREE.Raycaster,
+    mouse: THREE.Vector2
+  ): void {
+    try {
+      // マウス座標の正規化
+      mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+      // レイキャスティング
+      raycaster.setFromCamera(mouse, this.camera);
+      const intersects = raycaster.intersectObjects([
+        this.cube,
+        ...(this.model ? [this.model] : [])
+      ]);
+
+      if (intersects.length > 0) {
+        const intersectedObject = intersects[0].object;
+        
+        // クリックされたオブジェクトに応じた処理
+        if (intersectedObject === this.cube) {
+          this.startCubeRotation();
+          this.playCsoundEvent().catch(this.handleError);
+        } else if (this.model && intersectedObject === this.model) {
+          this.startModelScale();
+        }
+
+        if (this.debugMode) {
+          console.log('Clicked object:', {
+            type: intersectedObject.type,
+            position: intersectedObject.position,
+            distance: intersects[0].distance
+          });
+        }
+      }
+
+    } catch (error) {
+      this.handleError(new Error('Click handling error: ' + error));
+    }
+  }
+
+  /**
+   * ウィンドウのリサイズイベントを処理します
+   * レンダラーとカメラのアスペクト比を調整します
+   */
+  private handleResize(): void {
+    if (this.disposed) return;
+
+    try {
+      // カメラのアスペクト比を更新
+      this.camera.aspect = window.innerWidth / window.innerHeight;
+      this.camera.updateProjectionMatrix();
+
+      // レンダラーのサイズを更新
+      this.renderer.setSize(window.innerWidth, window.innerHeight);
+      
+      // ピクセル比の調整（パフォーマンスのため制限）
+      const pixelRatio = Math.min(window.devicePixelRatio, 2);
+      this.renderer.setPixelRatio(pixelRatio);
+
+    } catch (error) {
+      this.handleError(new Error('Resize handling error: ' + error));
+    }
+  }
+
+  /**
+   * キーボード入力を処理します
+   * カメラの移動と特殊機能を制御します
+   */
+  private handleKeyDown(event: KeyboardEvent): void {
+    try {
+      const moveSpeed = 0.1;
+      const moveDistance = new THREE.Vector3();
+
+      switch (event.key.toLowerCase()) {
+        case 'w': 
+          moveDistance.z = -moveSpeed;
+          break;
+        case 's': 
+          moveDistance.z = moveSpeed;
+          break;
+        case 'a': 
+          moveDistance.x = -moveSpeed;
+          break;
+        case 'd': 
+          moveDistance.x = moveSpeed;
+          break;
+        case 'q': 
+          moveDistance.y = moveSpeed;
+          break;
+        case 'e': 
+          moveDistance.y = -moveSpeed;
+          break;
+        // ESCキーでアニメーションをリセット
+        case 'escape':
+          this.resetAnimations();
+          break;
+      }
+
+      // カメラの移動を適用
+      this.camera.position.add(moveDistance);
+      
+      if (this.debugMode && moveDistance.lengthSq() > 0) {
+        console.log('Camera position:', this.camera.position);
+      }
+
+    } catch (error) {
+      this.handleError(new Error('Keyboard handling error: ' + error));
+    }
+  }
+
+  /**
+   * キューブの回転アニメーションを開始します
+   */
+  private startCubeRotation(): void {
+    this.animationState.cubeRotating = true;
+    
+    // 5秒後にアニメーションを停止
+    setTimeout(() => {
+      if (!this.disposed) {
+        this.animationState.cubeRotating = false;
+        
+        if (this.debugMode) {
+          console.log('Cube rotation completed');
+        }
+      }
+    }, 5000);
+  }
+
+  /**
+   * モデルのスケーリングアニメーションを開始します
+   */
+  private startModelScale(): void {
+    this.animationState.modelScaling = true;
+    
+    // 5秒後にアニメーションを停止
+    setTimeout(() => {
+      if (!this.disposed) {
+        this.animationState.modelScaling = false;
+        
+        if (this.debugMode) {
+          console.log('Model scaling completed');
+        }
+      }
+    }, 5000);
+  }
+
+  /**
+   * すべてのアニメーションをリセットします
+   */
+  private resetAnimations(): void {
+    this.animationState.cubeRotating = false;
+    this.animationState.modelScaling = false;
+    
+    // モデルのスケールをリセット
+    if (this.model) {
+      this.model.scale.setScalar(3.0);
+    }
+    
+    // キューブの回転をリセット
+    this.cube.rotation.set(0, 0, 0);
+    
+    if (this.debugMode) {
+      console.log('Animations reset');
+    }
+  }
+
+  /**
+   * デバッグヘルパーの表示/非表示を切り替えます
+   */
+  private toggleDebugHelpers(): void {
+    if (!this.debugMode) return;
+
+    this.scene.traverse((object) => {
+      if (
+        object instanceof THREE.AxesHelper ||
+        object instanceof THREE.GridHelper ||
+        object instanceof THREE.Box3Helper
+      ) {
+        object.visible = !object.visible;
+      }
+    });
+  }
+
+/**
+   * パフォーマンス統計情報を更新します
+   * FPS、フレーム時間、メモリ使用量などを追跡します
+   */
+  private updatePerformanceStats(): void {
+    const currentTime = performance.now();
+    const deltaTime = currentTime - this.performanceStats.lastTime;
+    
+    // FPSの計算（直近60フレームの平均）
+    this.performanceStats.fps = Math.round(1000 / deltaTime);
+    this.performanceStats.frameTime = Math.round(deltaTime);
+    this.performanceStats.lastTime = currentTime;
+
+    // メモリ使用状況の取得（WebGL関連）
+    if (this.debugMode) {
+      const memory = (this.renderer.info.memory as any);
+      const render = (this.renderer.info.render as any);
+      
+      console.group('Performance Stats');
+      console.log('FPS:', this.performanceStats.fps);
+      console.log('Frame Time:', this.performanceStats.frameTime, 'ms');
+      console.log('Geometries in memory:', memory.geometries);
+      console.log('Textures in memory:', memory.textures);
+      console.log('Draw calls per frame:', render.calls);
+      console.log('Triangles rendered:', render.triangles);
+      console.groupEnd();
+    }
+  }
+
+  /**
+   * シーンの詳細情報をログに出力します
+   * デバッグモード時のみ動作します
+   */
+  private logSceneInfo(): void {
+    if (!this.debugMode) return;
+
+    const sceneInfo = {
+      objects: this.scene.children.length,
+      meshes: this.scene.children.filter(child => child instanceof THREE.Mesh).length,
+      lights: this.scene.children.filter(child => child instanceof THREE.Light).length,
+      materials: this.resourceManager.materials.length,
+      textures: this.resourceManager.textures.length,
+      geometries: this.resourceManager.geometries.length,
+      animationStates: {
+        cubeRotating: this.animationState.cubeRotating,
+        modelScaling: this.animationState.modelScaling
+      },
+      cameraPosition: this.camera.position.toArray(),
+      modelStatus: this.model ? 'Loaded' : 'Not Loaded'
+    };
+
+    console.group('Scene Information');
+    Object.entries(sceneInfo).forEach(([key, value]) => {
+      console.log(`${key}:`, value);
+    });
+    console.groupEnd();
+  }
+
+  /**
+   * リソースの使用状況を監視し、必要に応じて警告を表示します
+   */
+  private checkResourceUsage(): void {
+    const warningThresholds = {
+      materials: 100,
+      textures: 50,
+      geometries: 200
+    };
+
+    const resources = {
+      materials: this.resourceManager.materials.length,
+      textures: this.resourceManager.textures.length,
+      geometries: this.resourceManager.geometries.length
+    };
+
+    Object.entries(resources).forEach(([key, count]) => {
+      if (count > warningThresholds[key as keyof typeof warningThresholds]) {
+        console.warn(`High ${key} usage detected: ${count} ${key} in memory`);
+      }
+    });
+  }
+
+  /**
+   * アプリケーションのリソースを解放します
+   * メモリリークを防ぐために重要です
+   */
+  public dispose(): void {
+    if (this.disposed) return;
+    
+    console.log('Starting application disposal...');
+    this.disposed = true;
+
+    // アニメーションの停止
+    this.resetAnimations();
+
+    try {
+      // Csoundの停止
+      if (this.csound) {
+        this.csound.stop().catch(this.handleError);
+        this.csound = null;
+      }
+
+      // イベントリスナーの解除
+      window.removeEventListener('resize', this.handleResize.bind(this));
+      window.removeEventListener('beforeunload', this.dispose.bind(this));
+
+      // Three.jsリソースの解放
+      this.disposeThreeJsResources();
+
+      // UIコンポーネントの削除
+      this.cleanupUIComponents();
+
+      console.log('Application disposed successfully');
+
+    } catch (error) {
+      this.handleError(new Error('Error during disposal: ' + error));
+    }
+  }
+
+  /**
+   * Three.jsの関連リソースを解放します
+   */
+  private disposeThreeJsResources(): void {
+    // テクスチャの解放
+    this.resourceManager.textures.forEach(texture => {
+      texture.dispose();
+    });
+
+    // ジオメトリの解放
+    this.resourceManager.geometries.forEach(geometry => {
+      geometry.dispose();
+    });
+
+    // マテリアルの解放
+    this.resourceManager.materials.forEach(material => {
+      if (material.map) material.map.dispose();
+      material.dispose();
+    });
+
+    // レンダラーの解放
+    this.renderer.dispose();
+    this.renderer.forceContextLoss();
+    
+    // シーンのクリア
+    this.clearScene();
+
+    // リソース配列のリセット
+    this.resourceManager.textures = [];
+    this.resourceManager.geometries = [];
+    this.resourceManager.materials = [];
+  }
+
+  /**
+   * シーン内のすべてのオブジェクトを再帰的に解放します
+   */
+  private clearScene(): void {
+    const disposeNode = (node: THREE.Object3D) => {
+      if (node instanceof THREE.Mesh) {
+        if (node.geometry) {
+          node.geometry.dispose();
+        }
+        
+        if (Array.isArray(node.material)) {
+          node.material.forEach(material => material.dispose());
+        } else if (node.material) {
+          node.material.dispose();
+        }
+      }
+    };
+
+    this.scene.traverse(disposeNode);
+    this.scene.clear();
+  }
+
+  /**
+   * UIコンポーネントをクリーンアップします
+   */
+  private cleanupUIComponents(): void {
+    // Stats パネルの削除
+    if (this.stats && this.stats.dom && this.stats.dom.parentElement) {
+      this.stats.dom.parentElement.removeChild(this.stats.dom);
+    }
+
+    // インストラクションパネルの削除
+    if (this.instructionsDiv && this.instructionsDiv.parentElement) {
+      this.instructionsDiv.parentElement.removeChild(this.instructionsDiv);
+    }
+  }
+
+  /**
+   * エラー発生時のリソースクリーンアップを行います
+   */
+  private handleResourceError(error: Error): void {
+    console.error('Resource error occurred:', error);
+    
+    // エラー発生時の緊急クリーンアップ
+    this.resourceManager.textures.forEach(texture => texture.dispose());
+    this.resourceManager.geometries.forEach(geometry => geometry.dispose());
+    this.resourceManager.materials.forEach(material => material.dispose());
+    
+    // リソースマネージャーのリセット
+    this.resourceManager = {
+      textures: [],
+      geometries: [],
+      materials: []
+    };
+
+    throw new Error('Resource cleanup after error: ' + error.message);
+  }
+}
+  /**
+   * エラーハンドリングを行うクラスです
+   * アプリケーション全体のエラー管理を担当します
+   */
+class ErrorHandler {
+  private static readonly ERROR_DISPLAY_DURATION = 5000; // ミリ秒
+  private readonly errorContainer: HTMLDivElement;
+    
+    constructor() {
+      this.errorContainer = this.createErrorContainer();
+    }
+
+    /**
+     * エラーメッセージを表示するコンテナを作成します
+     */
+    private createErrorContainer(): HTMLDivElement {
+      const container = document.createElement('div');
+      Object.assign(container.style, {
+        position: 'fixed',
+        top: '10px',
+        right: '10px',
+        zIndex: '1000',
+        maxWidth: '300px'
+      });
+      document.body.appendChild(container);
+      return container;
+    }
+
+    /**
+     * エラーを処理し、適切な対応を行います
+     */
+    public handleError(error: unknown, context?: string): void {
+      const errorInfo = this.formatError(error, context);
+      
+      console.error('Application Error:', errorInfo);
+      this.showErrorToUser(errorInfo.userMessage);
+      this.logErrorDetails(errorInfo);
+
+      // 重大なエラーの場合、Sentryなどのエラー追跡サービスに送信
+      if (errorInfo.severity === 'critical') {
+        this.reportErrorToService(errorInfo);
+      }
+    }
+
+    /**
+     * エラー情報を整形します
+     */
+    private formatError(error: unknown, context?: string): ErrorInfo {
+      const errorInfo: ErrorInfo = {
+        message: '',
+        stack: '',
+        timestamp: new Date().toISOString(),
+        severity: 'normal',
+        userMessage: '',
+        context: context || 'general'
+      };
+
+      if (error instanceof Error) {
+        errorInfo.message = error.message;
+        errorInfo.stack = error.stack || '';
+        errorInfo.userMessage = this.getUserFriendlyMessage(error);
+      } else {
+        errorInfo.message = String(error);
+        errorInfo.userMessage = '予期せぬエラーが発生しました';
+      }
+
+      // エラーの重大度を判定
+      if (
+        error instanceof WebGLContextLossError ||
+        error instanceof OutOfMemoryError ||
+        errorInfo.message.includes('WebGL')
+      ) {
+        errorInfo.severity = 'critical';
+      }
+
+      return errorInfo;
+    }
+
+    /**
+     * ユーザーフレンドリーなエラーメッセージを生成します
+     */
+    private getUserFriendlyMessage(error: Error): string {
+      const errorMessages: Record<string, string> = {
+        'WebGL context lost': '画面の表示に問題が発生しました。ページを再読み込みしてください。',
+        'Out of memory': 'メモリが不足しています。他のアプリケーションを閉じてから再試行してください。',
+        'Failed to load resource': 'リソースの読み込みに失敗しました。インターネット接続を確認してください。',
+        'Invalid model data': '3Dモデルの読み込みに失敗しました。',
+        'default': '予期せぬエラーが発生しました。'
+      };
+
+      for (const [key, message] of Object.entries(errorMessages)) {
+        if (error.message.includes(key)) {
+          return message;
+        }
+      }
+
+      return errorMessages.default;
+    }
+
+    /**
+     * エラーメッセージをユーザーに表示します
+     */
+    private showErrorToUser(message: string): void {
+      const errorElement = document.createElement('div');
+      Object.assign(errorElement.style, {
+        backgroundColor: 'rgba(255, 0, 0, 0.8)',
+        color: 'white',
+        padding: '10px',
+        margin: '5px',
+        borderRadius: '5px',
+        fontFamily: 'Arial, sans-serif',
+        fontSize: '14px',
+        opacity: '1',
+        transition: 'opacity 0.5s ease-in-out'
+      });
+
+      errorElement.textContent = message;
+      this.errorContainer.appendChild(errorElement);
+
+      // エラーメッセージを徐々にフェードアウト
+      setTimeout(() => {
+        errorElement.style.opacity = '0';
+        setTimeout(() => {
+          if (errorElement.parentNode === this.errorContainer) {
+            this.errorContainer.removeChild(errorElement);
+          }
+        }, 500);
+      }, this.ERROR_DISPLAY_DURATION);
+    }
+
+    /**
+     * エラーの詳細情報をログに記録します
+     */
+    private logErrorDetails(errorInfo: ErrorInfo): void {
+      console.group('Error Details');
+      console.log('Message:', errorInfo.message);
+      console.log('Timestamp:', errorInfo.timestamp);
+      console.log('Context:', errorInfo.context);
+      console.log('Severity:', errorInfo.severity);
+      if (errorInfo.stack) {
+        console.log('Stack Trace:', errorInfo.stack);
+      }
+      console.groupEnd();
+    }
+
+    /**
+     * 重大なエラーをエラー追跡サービスに報告します
+     */
+    private reportErrorToService(errorInfo: ErrorInfo): void {
+      // エラー追跡サービスへの送信をシミュレート
+      console.log('Reporting critical error to error tracking service:', errorInfo);
+    }
+}
+
+  /**
+   * パフォーマンス最適化のためのユーティリティクラスです
+   */
+class PerformanceOptimizer {
+    private readonly targetFPS = 60;
+    private readonly fpsThreshold = 45;
+    private readonly measurementPeriod = 1000; // ミリ秒
+
+    private frameCount = 0;
+    private lastOptimizationTime = performance.now();
+    private isOptimizing = false;
+
+    /**
+     * パフォーマンスを監視し、必要に応じて最適化を行います
+     */
+    public monitor(currentFPS: number): void {
+      this.frameCount++;
+      const currentTime = performance.now();
+      const elapsedTime = currentTime - this.lastOptimizationTime;
+
+      if (elapsedTime >= this.measurementPeriod) {
+        if (currentFPS < this.fpsThreshold && !this.isOptimizing) {
+          this.optimize();
+        }
+        this.frameCount = 0;
+        this.lastOptimizationTime = currentTime;
+      }
+    }
+
+    /**
+     * パフォーマンス最適化を実行します
+     */
+    private optimize(): void {
+      this.isOptimizing = true;
+      
+      // レンダリング品質の調整
+      const optimizations = [
+        this.reduceTextureQuality.bind(this),
+        this.simplifyGeometries.bind(this),
+        this.adjustShadowQuality.bind(this)
+      ];
+
+      // 段階的に最適化を適用
+      const applyOptimizations = async () => {
+        for (const optimization of optimizations) {
+          await optimization();
+          await this.measureImpact();
+        }
+        this.isOptimizing = false;
+      };
+
+      applyOptimizations().catch(console.error);
+    }
+
+    /**
+     * テクスチャの品質を調整します
+     */
+    private async reduceTextureQuality(): Promise<void> {
+      // テクスチャのミップマップレベルを調整
+      this.resourceManager.textures.forEach(texture => {
+        texture.minFilter = THREE.LinearFilter;
+        texture.magFilter = THREE.LinearFilter;
+        texture.needsUpdate = true;
+      });
+    }
+
+    /**
+     * ジオメトリを単純化します
+     */
+    private async simplifyGeometries(): Promise<void> {
+      // LOD（Level of Detail）の調整
+      this.scene.traverse((object) => {
+        if (object instanceof THREE.Mesh && 
+            object.geometry instanceof THREE.BufferGeometry) {
+          // ジオメトリの単純化処理
+        }
+      });
+    }
+
+    /**
+     * シャドウの品質を調整します
+     */
+    private async adjustShadowQuality(): Promise<void> {
+      this.scene.traverse((object) => {
+        if (object instanceof THREE.Light && object.shadow) {
+          object.shadow.mapSize.width = 1024;
+          object.shadow.mapSize.height = 1024;
+        }
+      });
+    }
+
+    /**
+     * 最適化の効果を計測します
+     */
+    private async measureImpact(): Promise<void> {
+      return new Promise(resolve => {
+        let samples = 0;
+        let totalFPS = 0;
+        
+        const measure = () => {
+          if (samples < 60) {
+            totalFPS += this.performanceStats.fps;
+            samples++;
+            requestAnimationFrame(measure);
+          } else {
+            const averageFPS = totalFPS / samples;
+            console.log('Optimization impact - Average FPS:', averageFPS);
+            resolve();
+          }
+        };
+
+        requestAnimationFrame(measure);
+      });
+    }
+}
+
+  /**
+   * デバッグ用のユーティリティ機能を提供するクラスです
+   */
+class DebugUtils {
+    private readonly debugContainer: HTMLDivElement;
+    private readonly scene: THREE.Scene;
+    private isDebugVisible = false;
+
+    constructor(scene: THREE.Scene) {
+      this.scene = scene;
+      this.debugContainer = this.createDebugContainer();
+    }
+
+    /**
+     * デバッグ情報表示用のコンテナを作成します
+     */
+    private createDebugContainer(): HTMLDivElement {
+      const container = document.createElement('div');
+      Object.assign(container.style, {
+        position: 'fixed',
+        bottom: '10px',
+        left: '10px',
+        backgroundColor: 'rgba(0, 0, 0, 0.7)',
+        color: 'white',
+        padding: '10px',
+        borderRadius: '5px',
+        fontFamily: 'monospace',
+        fontSize: '12px',
+        display: 'none'
+      });
+      document.body.appendChild(container);
+      return container;
+    }
+
+    /**
+     * デバッグ情報の表示を切り替えます
+     */
+    public toggleDebugInfo(): void {
+      this.isDebugVisible = !this.isDebugVisible;
+      this.debugContainer.style.display = this.isDebugVisible ? 'block' : 'none';
+    }
+
+    /**
+     * シーン内のオブジェクト階層を表示します
+     */
+    public displaySceneHierarchy(): void {
+      let output = 'Scene Hierarchy:\n';
+      
+      const processNode = (node: THREE.Object3D, depth: number = 0) => {
+        const indent = '  '.repeat(depth);
+        output += `${indent}${node.type}: ${node.name || 'unnamed'}\n`;
+        node.children.forEach(child => processNode(child, depth + 1));
+      };
+
+      processNode(this.scene);
+      this.updateDebugInfo(output);
+    }
+
+    /**
+     * メモリ使用状況を表示します
+     */
+    public displayMemoryUsage(): void {
+      const memory = (this.renderer.info.memory as any);
+      const render = (this.renderer.info.render as any);
+
+      const info = [
+        `Geometries: ${memory.geometries}`,
+        `Textures: ${memory.textures}`,
+        `Draw calls: ${render.calls}`,
+        `Triangles: ${render.triangles}`,
+        `Points: ${render.points}`,
+        `Lines: ${render.lines}`
+      ].join('\n');
+
+      this.updateDebugInfo(info);
+    }
+
+    /**
+     * デバッグ情報を更新します
+     */
+    private updateDebugInfo(info: string): void {
+      this.debugContainer.textContent = info;
+    }
+}
+
+
+
+// アプリケーションの設定インターフェース
+interface AppConfig {
+  debugMode?: boolean;
+  performanceMode?: boolean;
+  errorHandling?: boolean;
+}
+
+/**
+ * アプリケーションを初期化し、必要なコンポーネントをセットアップします。
+ * 開発環境と本番環境で適切な設定が行われるように制御します。
+ */
+function initializeApplication(config: AppConfig = {}): void {
+  try {
+    // デフォルトの設定
+    const defaultConfig: AppConfig = {
+      debugMode: true, //process.env.NODE_ENV === 'development',
+      performanceMode: true,
+      errorHandling: true,
+      ...config
+    };
+
+    // メインアプリケーションの初期化
+    const app = new App();
+
+    // 開発モードの場合、デバッグツールを初期化
+    if (defaultConfig.debugMode) {
+      const debugUtils = new DebugUtils(app.getScene());
+      console.log('Debug mode enabled - Press Ctrl+D to toggle debug panel');
+    }
+
+    // パフォーマンス最適化の初期化
+    if (defaultConfig.performanceMode) {
+      const performanceOptimizer = new PerformanceOptimizer();
+      console.log('Performance optimization enabled');
+    }
+
+    // エラーハンドリングの初期化
+    if (defaultConfig.errorHandling) {
+      const errorHandler = new ErrorHandler();
+      console.log('Error handling enabled');
+    }
+
+    // ホットリロードの設定（開発環境のみ）
+    if (import.meta.hot) {
+      import.meta.hot.accept('./components/App', () => {
+        console.log('Hot reloading application...');
+        app.dispose();
+        initializeApplication(defaultConfig);
+      });
+    }
+
+    // アプリケーションの状態をグローバルに保存（デバッグ用）
+    if (defaultConfig.debugMode) {
+      (window as any).__APP__ = app;
+    }
+
+    console.log('Application initialized successfully');
+
+  } catch (error) {
+    console.error('Failed to initialize application:', error);
+    throw error;
+  }
+}
+
+
+initializeApplication();
