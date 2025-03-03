@@ -328,6 +328,18 @@ class App {
     
     const textureLoader = new THREE.TextureLoader();
     const texturePaths = [
+      'tri-2.png',      
+      'tri-2.png',
+      'tri-2.png',
+      'tri-2.png',
+      'tri-2.png',
+      'tri-2.png',
+      'tri-2.png',
+      'tri-2.png'
+    ];
+    
+    /*
+    const texturePaths = [
       'autumn_ground.jpg',
       'lakeSide.jpg',
       'ruinOfFishermansFactory.jpg',
@@ -335,7 +347,7 @@ class App {
       'kareha.jpg',
       'pebble.jpg'
     ];
-    
+    */
     texturePaths.forEach(path => {
       const texture = textureLoader.load(
         `/textures/${path}`,
